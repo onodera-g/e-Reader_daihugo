@@ -1,0 +1,18 @@
+# ===== 画面用（値は全角、= は半角） =====
+CARD=■
+CLEAR=　
+MARK=Ｘ
+
+# ラベル
+TIME_LABEL=ＴＩＭＥ：
+TARGET_LABEL=たいしょう：
+TARGET_TIMER=タイマー
+TARGET_MUSIC=おんがく
+TARGET_BG=はいけい
+
+MUSIC_LABEL=おんがく：
+BG_LABEL=はいけい：
+BG_SEP=／
+
+# カードタイトル
+CARD_TITLE=DaihuGo
