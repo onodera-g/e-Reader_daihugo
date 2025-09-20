@@ -11,4 +11,3 @@ static const unsigned char MSG_TARGET_BG[] = "\x82\xCD\x82\xA2\x82\xAF\x82\xA2";
 static const unsigned char MSG_MUSIC_LABEL[] = "\x82\xA8\x82\xF1\x82\xAA\x82\xAD\x81\x46";
 static const unsigned char MSG_BG_LABEL[] = "\x82\xCD\x82\xA2\x82\xAF\x82\xA2\x81\x46";
 static const unsigned char MSG_BG_SEP[] = "\x81\x5E";
-static const unsigned char MSG_CARD_TITLE[] = "\x44\x61\x69\x68\x75\x47\x6F";

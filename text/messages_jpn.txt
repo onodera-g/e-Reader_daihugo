@@ -14,5 +14,3 @@ MUSIC_LABEL=おんがく：
 BG_LABEL=はいけい：
 BG_SEP=／
 
-# カードタイトル
-CARD_TITLE=DaihuGo

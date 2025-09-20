@@ -19,7 +19,7 @@ r1: ; $(MAKE) bmp REGION=1 v=$(v)
 OUT       := daihugo
 OUTDIR  := build
 $(shell mkdir -p $(OUTDIR))
-NAME_KEY  ?= CARD_TITLE
+NAME_KEY  ?= daihugo
 
 DEVKITPRO ?= /opt/devkitpro
 DEVKITARM ?= $(DEVKITPRO)/devkitARM
