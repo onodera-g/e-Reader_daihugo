@@ -16,4 +16,13 @@ typedef signed short     s16;
 typedef signed int       s32;
 typedef signed long long s64;
 
+/* --- NULL フォールバック --- */
+#ifndef NULL
+  #ifdef __cplusplus
+    #define NULL 0
+  #else
+    #define NULL ((void*)0)
+  #endif
 #endif
+
+#endif /* DEF_H */

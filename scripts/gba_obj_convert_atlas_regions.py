@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # 240x160 PNG と、領域JSON([{name,x,y,w,h},...])を GBA OBJ(4bpp)用の
 # obj_atlas.c/.h にまとめる。
+# scripts/gba_obj_convert_atlas_regions.py assets/splite.png assets/splite_regions.json obj_atlas
 
 import sys, json
 from pathlib import Path
