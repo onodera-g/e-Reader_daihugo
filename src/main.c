@@ -19,6 +19,7 @@ static inline void wait_vblank_start(void){
 
 /* ── サウンド定義 ── */
 #define SFX_DEAL_ID  24
+#define SFX_YAGIRI_ID 25
 
 extern int __end[];
 
@@ -98,6 +99,15 @@ int main(void){
         render_reload_hand_card(&hands[0], g_player_face_tile_base, /*start=*/0);
       }
     }
+
+    /* ★ 8切りSEをこのフレームだけ鳴らす */
+    if (g.sfx_yagiri){
+      ERAPI_PlaySoundSystem((u32)SFX_YAGIRI_ID);
+      g.sfx_yagiri = 0;  /* 消費 */
+    }
+
+    /* ★ バナー表示ON/OFF：待機中だけ表示 */
+    render_set_yagiri_visible(g.yagiri_waiting);
 
     /* === 毎フレームの描画（OAM を並べ直す） === */
     render_frame(g.visible,

@@ -41,6 +41,13 @@ void render_reload_hand_card(const Hand* me,
                              int player_face_tile_base[12],
                              int start_tile_base /*通常0*/);
 
+
+/* 中央に 48x16 “yagiri” を出せるように初期VRAMロード */
+void render_init_yagiri(int* out_tile_base);
+
+/* フラグで表示/非表示を切り替える（毎フレーム呼んでOK） */
+void render_set_yagiri_visible(int on);
+
 #ifdef __cplusplus
 }
 #endif
