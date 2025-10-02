@@ -5,16 +5,6 @@
 #include "game.h"
 #include "cards.h"
 
-/*
- * render.h
- * --------
- * GBAのOBJ描画（スプライト）モジュール。
- * - 初期VRAMロード（自分の表、裏面、場カード用）
- * - 場カードの差し替え（VRAM）
- * - 毎フレームのOAM並べ直し（ERAPI_RenderFrame(1)直後に呼ぶ）
- * - 自分の手札が減ったときのVRAM詰め直し（表、最大12枚まで）
- */
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,29 +14,37 @@ void render_init_vram(const Hand* me,
                       int max_player_show,
                       int out_face_tile_base[12],
                       int* out_back_tile_base,
-                      int* out_field_tile_base);
+                      int* out_field_tile_base /* 互換のため残すが未使用可 */);
 
-/* 場カードの絵をVRAMに上書き（16x32=8タイル） */
+/* （互換）場カード1枚の絵をVRAMに上書き（16x32=8タイル）
+   ※ 複数枚対応後は render_set_field_cards() を推奨 */
 void render_upload_field_card(const char* name, int field_tile_base);
 
-/* 毎フレームのOAM更新（ERAPI_RenderFrame(1)直後に必ず呼ぶこと） */
+/* 場のカード群（表）をVRAMにロード（最大4枚） */
+void render_set_field_cards(const char* const names[4], int count);
+
+/* 毎フレームのOAM更新（ERAPI_RenderFrame(1)直後に必ず呼ぶこと）
+   新API：場は field_visible / field_count のみ渡す（内部にロード済み配列あり） */
 void render_frame(const int g_visible[PLAYERS],
                   const int player_face_tile_base[12],
                   int back_tile_base,
-                  int field_tile_base,
-                  int field_visible);
+                  int field_visible,
+                  int field_count);
 
 /* 自分の手札が減った/並びが変わったときに表を再転送（最大12） */
 void render_reload_hand_card(const Hand* me,
                              int player_face_tile_base[12],
                              int start_tile_base /*通常0*/);
 
-
-/* 中央に 48x16 “yagiri” を出せるように初期VRAMロード */
-void render_init_yagiri(int* out_tile_base);
-
-/* フラグで表示/非表示を切り替える（毎フレーム呼んでOK） */
+/* 8切りの表示要求（待機中だけON）— 見た目の優先度は「しばり ＞ 8切り」 */
 void render_set_yagiri_visible(int on);
+
+/* しばりを N フレームだけ表示要求（例: 60で約1秒）。
+   8切りの表示要求より“見た目上”優先。 */
+void render_trigger_sibari(int frames);
+
+/* 互換API: 旧名を新実装へフォワード（旧 main.c 対応） */
+void render_upload_field_cards(const char** names, int count);
 
 #ifdef __cplusplus
 }
