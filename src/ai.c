@@ -1,143 +1,222 @@
-// src/ai.c
-
-#include "ai.h"      
-#include "cards.h"   
+#include "ai.h"
+#include "cards.h"
 #include <stddef.h>  // NULL
 
-/* ------------------------------------------------------------
- * 有効ランク（革命/JB反転込み）
- *  - 強さは 3..16 (Joker=16)
- *  - 反転が有効（rev ^ jb == 1）のとき 3..16 を 16..3 に対応させる (=19-r)
- * ------------------------------------------------------------ */
+/* 調整パラメータ */
+#define STRAIGHT_MIN  3
+
+/* rank 有効値（革命/JB 反転） */
 static u8 rank_effective(u8 r, u8 rev, u8 jb){
     u8 inv = (rev ^ jb) & 1u;
-    return inv ? (u8)(19u - r) : r;
+    return inv ? (u8)(19u - r) : r; /* 3..16 を反転マップ */
+}
+u8 rank_effective_ext(u8 r, u8 rev, u8 jb){ return rank_effective(r, rev, jb); }
+
+/* ---- ユーティリティ ---- */
+typedef struct {
+    u8 card;     /* 実カードID */
+    u8 rank;     /* 素のランク（3..16） */
+    u8 suit;     /* 0..3 */
+    u8 rank_eff; /* 有効ランク（革命/JB反転後） */
+} CardView;
+
+static inline u8 suit_of(u8 c){ return CARD_SUIT(c); }
+static inline u8 rank_of(u8 c){ return CARD_RANK(c); }
+static inline int is_joker(u8 c){ return rank_of(c)==16; }
+
+/* --- 構造体コピーを一切使わないヘルパ --- */
+static inline void cv_set(CardView* d, u8 card, u8 rank, u8 suit, u8 rank_eff){
+    d->card = card; d->rank = rank; d->suit = suit; d->rank_eff = rank_eff;
+}
+static inline void cv_copy(CardView* d, const CardView* s){
+    d->card = s->card; d->rank = s->rank; d->suit = s->suit; d->rank_eff = s->rank_eff;
+}
+static inline void cv_swap(CardView* a, CardView* b){
+    u8 t_card = a->card, t_rank = a->rank, t_suit = a->suit, t_eff = a->rank_eff;
+    a->card = b->card; a->rank = b->rank; a->suit = b->suit; a->rank_eff = b->rank_eff;
+    b->card = t_card;  b->rank = t_rank;  b->suit = t_suit;  b->rank_eff = t_eff;
 }
 
-/* 外部公開：ai.h の要求どおりラップを提供 */
-u8 rank_effective_ext(u8 r, u8 rev, u8 jb){
-    return rank_effective(r, rev, jb);
-}
-
-/* 手札中の各ランク(3..16)の枚数を数える（ヒストグラム） */
-static void build_histogram(const Hand* hand, u8 have[17]){
-    for (int i=0;i<17;++i) have[i]=0;
-    for (int i=0;i<hand->count;++i){
-        u8 r = eval_rank_from_name(hand->cards[i]); // 3..16
-        if (r>=3 && r<=16) have[r]++;
+/* 手札をビューに展開（有効ランクを前計算） */
+static void build_card_view(const Hand* h, u8 rev, u8 jb, CardView out[20], int* out_n){
+    int n=0;
+    for (int i=0;i<h->count;++i){
+        u8 c = h->cards[i];
+        u8 r = rank_of(c);
+        u8 s = suit_of(c);
+        u8 e = rank_effective(r, rev, jb);
+        cv_set(&out[n++], c, r, s, e);
     }
+    *out_n = n;
 }
 
-/* 指定ランク r のカードを n枚 out_cards[] に詰める（左から）。Joker複数は不許可。*/
-static int take_cards_of_rank(const Hand* hand, u8 r, u8 n, const char** out_cards){
-    if (r==16 && n>=2) return 0; // Joker は単騎のみ許可
-    int wrote=0;
-    for (int i=0;i<hand->count && wrote<n;++i){
-        if (eval_rank_from_name(hand->cards[i]) == r){
-            out_cards[wrote++] = hand->cards[i];
+/* ランク昇順（同値は suit で安定） */
+static void sort_by_eff_rank(CardView a[], int n){
+    for (int i=0;i<n;i++){
+        for (int j=i+1;j<n;j++){
+            if (a[i].rank_eff > a[j].rank_eff ||
+               (a[i].rank_eff==a[j].rank_eff && a[i].suit > a[j].suit)){
+                cv_swap(&a[i], &a[j]);
+            }
         }
     }
-    return (wrote==n) ? wrote : 0;
 }
 
-/* 追従：場の枚数 n に限定し、勝てる中で“最も弱い”ランクを選ぶ */
-static int pick_follow_minwin(const Hand* hand, const FieldState* fs,
-                              const u8 have[17], u8 n,
-                              const char** out_cards, u8* out_n)
-{
-    const u8 rev = fs->revolution;
-    const u8 jb  = fs->jback_active;
+/* スート毎の枚数を数える（Jokerは除外） */
+static void build_histogram_from_view(const CardView* cv, int n, u8 have[17]){
+    for (int r=0;r<=16;++r) have[r]=0;
+    for (int i=0;i<n;++i){
+        if (!is_joker(cv[i].card)) have[cv[i].rank]++;
+    }
+}
 
-    // 場の“必要有効ランク”。ai.h で field_eff_rank が与えられている。
-    if (!fs->field_visible || fs->field_count==0) return 0; // リードならここは来ない想定
+/* ---- 出し判定ヘルパ ---- */
+
+/* 同ランク n枚の最小（条件を満たす最小）を pick */
+static int pick_min_set_from_view(const CardView* cv, int ncv, u8 need_rank_eff, int need_n,
+                                  const FieldState* fs,
+                                  u8 out_cards[4], u8* out_n){
+    u8 suit_mask = fs->field_suit_mask;
+    for (int i=0;i<ncv;i++){
+        u8 r = cv[i].rank;
+        u8 re= cv[i].rank_eff;
+        if (re <= need_rank_eff) continue;
+        u8 tmp_cards[4]; int tn=0;
+        u8 suit_mask_set = 0;
+        for (int j=i;j<ncv && tn<need_n;j++){
+            if (cv[j].rank == r && cv[j].rank_eff==re){
+                suit_mask_set |= (1u<<cv[j].suit);
+                tmp_cards[tn++] = cv[j].card;
+            }
+        }
+        if (tn==need_n){
+            if (fs->sibari_active){
+                if (suit_mask_set != suit_mask) continue; /* セット時もしばり集合一致 */
+            }
+            for (int k=0;k<tn;k++) out_cards[k]=tmp_cards[k];
+            *out_n = (u8)tn;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 階段：同一スートで連番 STRAIGHT_MIN.. 2/Jokerは不可、トップの rank_eff で比較 */
+static int pick_min_straight_from_view(const CardView* cv, int ncv, u8 need_top_eff, int need_len,
+                                       const FieldState* fs,
+                                       u8 out_cards[4], u8* out_n){
+    (void)fs; /* しばりは階段に適用しない仕様 */
+    for (u8 s=0; s<4; ++s){
+        CardView arr[20]; int an=0;
+        for (int i=0;i<ncv;i++){
+            if (cv[i].suit==s){
+                if (cv[i].rank>=15) continue; /* 2(15)/Joker(16) は階段不可 */
+                cv_copy(&arr[an++], &cv[i]);
+            }
+        }
+        if (an < need_len) continue;
+        sort_by_eff_rank(arr, an);
+
+        for (int i=0;i<an;i++){
+            int run=1;
+            out_cards[0]=arr[i].card;
+            for (int j=i+1;j<an && run<need_len;j++){
+                if (arr[j].rank_eff == arr[j-1].rank_eff) continue;
+                if (arr[j].rank_eff == (u8)(arr[j-1].rank_eff+1)){
+                    out_cards[run++] = arr[j].card;
+                }else{
+                    break;
+                }
+            }
+            if (run==need_len){
+                u8 top_eff = rank_effective(rank_of(out_cards[need_len-1]), fs->revolution, fs->jback_active);
+                if (top_eff > need_top_eff){
+                    *out_n = (u8)need_len;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/* 先出し：複数枚（4→3→2）を優先、なければ単体、最後に階段 */
+static int pick_lead_pref_multi_from_view(const CardView* cv, int ncv, const FieldState* fs,
+                                          u8 out_cards[4], u8* out_n){
+    CardView tmp[20];
+    for (int i=0;i<ncv;i++) cv_copy(&tmp[i], &cv[i]);
+    sort_by_eff_rank(tmp, ncv);
+
+    /* クアッド→トリプル→ペア→単体 の順で弱いものから */
+    for (int need_n=4; need_n>=2; --need_n){
+        u8 dummy_prev_eff = 0; /* 先出しなので下限なし扱い（0） */
+        if (pick_min_set_from_view(tmp,ncv,dummy_prev_eff,need_n,fs,out_cards,out_n)) return 1;
+    }
+
+    /* 単体：しばり中はスート一致 */
+    for (int i=0;i<ncv;i++){
+        if (is_joker(tmp[i].card)) continue;
+        if (fs->sibari_active){
+            u8 mask = (1u<<tmp[i].suit);
+            if (mask != fs->field_suit_mask) continue;
+        }
+        out_cards[0]=tmp[i].card; *out_n=1; return 1;
+    }
+
+    /* 最後に階段（最低 STRAIGHT_MIN） */
+    for (int need_len=4; need_len>=STRAIGHT_MIN; --need_len){
+        if (pick_min_straight_from_view(cv,ncv,0,need_len,fs,out_cards,out_n)) return 1;
+    }
+    return 0;
+}
+
+/* 後追い：場の形に合わせて最小勝ち（単体/セット/階段） */
+static int pick_follow_minwin_from_view(const CardView* cv, int ncv,
+                                        const FieldState* fs, const u8 have[17],
+                                        u8 out_cards[4], u8* out_n){
+    if (fs->field_is_straight){
+        int need_len = fs->field_count;
+        u8 need_top_eff = fs->field_eff_rank;
+        if (pick_min_straight_from_view(cv,ncv,need_top_eff,need_len,fs,out_cards,out_n)) return 1;
+        return 0;
+    }
+
+    /* セット（または単体） */
+    int need_n = fs->field_count;
     u8 need_eff = fs->field_eff_rank;
 
-    u8 best_r = 0;
-    u8 best_e = 255;
-
-    for (u8 r=3; r<=16; ++r){
-        if (have[r] < n) continue;             // n枚作れない
-        if (r==16 && n>=2) continue;           // Joker複数は不可
-        u8 e = rank_effective(r, rev, jb);
-        if (e <= need_eff) continue;           // 勝てない
-        if (!best_r || e < best_e){ best_r = r; best_e = e; }
+    /* セット後追い（速度のためざっくり枚数確認） */
+    for (int i=0;i<ncv;i++){
+        u8 r = cv[i].rank;
+        if (have[r] < need_n) continue;
+        if (pick_min_set_from_view(cv,ncv,need_eff,need_n,fs,out_cards,out_n)) return 1;
+        break;
     }
-    if (!best_r) return 0;
 
-    int wrote = take_cards_of_rank(hand, best_r, n, out_cards);
-    if (wrote != (int)n) return 0;
-    *out_n = n;
-    return 1;
-}
-
-/* リード：4→3→2→1 の順で探し、同じ n の中で“最も弱い”ランクを選ぶ */
-static int pick_lead_pref_multi(const Hand* hand, const FieldState* fs,
-                                const u8 have[17],
-                                const char** out_cards, u8* out_n)
-{
-    const u8 rev = fs->revolution;
-    const u8 jb  = fs->jback_active;
-
-    for (u8 n=4; n>=1; --n){
-        u8 best_r = 0;
-        u8 best_e = 255;
-        for (u8 r=3; r<=16; ++r){
-            if (have[r] < n) continue;
-            if (r==16 && n>=2) continue;       // Joker複数は不可
-            u8 e = rank_effective(r, rev, jb); // 反転考慮で“弱い方”を温存
-            if (!best_r || e < best_e){ best_r = r; best_e = e; }
+    /* 単体後追い：最小の re>need_eff を選び、しばり中はスート一致 */
+    for (int i=0;i<ncv;i++){
+        if (is_joker(cv[i].card)) continue;
+        if (cv[i].rank_eff <= need_eff) continue;
+        if (fs->sibari_active){
+            u8 mask = (1u<<cv[i].suit);
+            if (mask != fs->field_suit_mask) continue;
         }
-        if (best_r){
-            int wrote = take_cards_of_rank(hand, best_r, n, out_cards);
-            if (wrote == (int)n){ *out_n = n; return 1; }
-        }
-        if (n==1) break; // u8 の underflow 防止
+        out_cards[0]=cv[i].card; *out_n=1; return 1;
     }
     return 0;
 }
 
-/* ------------------------------------------------------------
- * 公開API
- * ------------------------------------------------------------ */
+/* ---- 公開API ---- */
+int ai_choose_move_group(const Hand* hand, const FieldState* fs, u8 out_cards[4], u8* out_n){
+    CardView cv[20];
+    int ncv=0;
+    build_card_view(hand, fs->revolution, fs->jback_active, cv, &ncv);
 
-/* 単騎（n=1 の特化版）—グループ選択ロジックを流用 */
-int ai_choose_move_single(const Hand* hand,
-                          const FieldState* fs,
-                          const char** out_card)
-{
-    const char* tmp[4] = {0};
-    u8 n = 0;
-    u8 have[17]; build_histogram(hand, have);
-    int ok = 0;
+    u8 have[17]; build_histogram_from_view(cv,ncv,have);
 
     if (!fs->field_visible || fs->field_count==0){
-        ok = pick_lead_pref_multi(hand, fs, have, tmp, &n);
+        return pick_lead_pref_multi_from_view(cv,ncv,fs,out_cards,out_n);
     }else{
-        ok = pick_follow_minwin(hand, fs, have, /*n=*/fs->field_count, tmp, &n);
+        return pick_follow_minwin_from_view(cv,ncv,fs,have,out_cards,out_n);
     }
-    if (ok && n==1){ *out_card = tmp[0]; return 1; }
-    return 0;
 }
-
-/* ── 場に出すカードの選択 ──
-   - ゲームの状況をFsとして受け取る
-   - 場に出すカードの枚数をnに格納
-   - 場に出すカードの種類をchosen[0]~chosen[3]に格納 */
-int ai_choose_move_group(const Hand* hand,
-                         const FieldState* fs,
-                         const char** out_cards,
-                         u8* out_n)
-    {
-        u8 have[17];
-        build_histogram(hand, have);
-
-        if (!fs->field_visible || fs->field_count==0){
-            // リード：複数優先 4→3→2→1、同n内で“最弱ランク”を選ぶ
-            return pick_lead_pref_multi(hand, fs, have, out_cards, out_n);
-        }else{
-            // 追従：同枚数のみ検討し、勝てる中で“最弱”を選ぶ
-            u8 n = fs->field_count;
-            if (n<1 || n>4) return 0;
-            return pick_follow_minwin(hand, fs, have, n, out_cards, out_n);
-        }
-    }

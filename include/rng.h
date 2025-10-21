@@ -3,17 +3,14 @@
 
 #include "def.h"
 
-/* 
- * 乱数生成モジュールのインタフェース宣言。
- * 
- * - rng_seed(s): 乱数の種を初期化する
- * - rng_next() : 次の乱数値 (u32) を返す
- * - rng_range(lo, hi): lo 以上 hi 未満の範囲で乱数を返す
- *
- */
+/* --- ランダム待機からシード生成 --- */
+void rng_seed(int min_frames, int max_frames);
 
-void rng_seed(u32 s);
+/* --- 32bit 乱数を返す（xorshift32）--- */
 u32  rng_next(void);
+
+/* --- (lo, hi) の半開区間で一様乱数を返す（hi <= lo の場合は lo を返す）--- */
 int  rng_range(int lo, int hi);
+
 
 #endif /* RNG_H */

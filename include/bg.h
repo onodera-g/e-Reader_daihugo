@@ -25,3 +25,4 @@ extern const unsigned short bgPal[16];
 #endif // GRIT_BG_H
 
 //}}BLOCK(bg)
+    

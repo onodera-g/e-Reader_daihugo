@@ -9,6 +9,9 @@
 extern "C" {
 #endif
 
+/*ゲーム画面（背景やUI）を初期化 */
+void render_init_ui(void); 
+
 /* 初期VRAMロード（VBlank中に呼ぶ） */
 void render_init_vram(const Hand* me,
                       int max_player_show,
@@ -45,6 +48,10 @@ void render_trigger_sibari(int frames);
 
 /* 互換API: 旧名を新実装へフォワード（旧 main.c 対応） */
 void render_upload_field_cards(const char** names, int count);
+
+void render_effect_enqueue(int effect, int frames);
+
+int  render_is_effect_active(void);
 
 #ifdef __cplusplus
 }

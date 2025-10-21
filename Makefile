@@ -19,7 +19,7 @@ r1: ; $(MAKE) bmp REGION=1 v=$(v)
 OUT       := daihugo
 OUTDIR  := build
 $(shell mkdir -p $(OUTDIR))
-NAME_KEY  ?= daihugo
+# NAME_KEY は不要になったので削除
 
 DEVKITPRO ?= /opt/devkitpro
 DEVKITARM ?= $(DEVKITPRO)/devkitARM
@@ -29,13 +29,14 @@ CC      := $(DEVKITARM)/bin/arm-none-eabi-gcc
 AS      := $(DEVKITARM)/bin/arm-none-eabi-as
 OBJCOPY := $(DEVKITARM)/bin/arm-none-eabi-objcopy
 
-CFLAGS  := -mthumb -mcpu=arm7tdmi -Os -ffunction-sections -fdata-sections \
-           -fno-builtin -fomit-frame-pointer -Wall -Wextra -Iinclude
-LDFLAGS := -T ereader.ld -nostdlib -Wl,--gc-sections
+ CFLAGS  := -mthumb -mcpu=arm7tdmi -Os -ffunction-sections -fdata-sections \
+            -fno-builtin -fomit-frame-pointer -Wall -Wextra -Iinclude \
+            -I$(DEVKITPRO)/libgba/include
+LDFLAGS := -T ereader.ld -nostdlib -Wl,--gc-sections 
 LIBS    := -lgcc
 
 # --- ソース（PSGドライバは使わないので除外） ---
-SRCS := $(filter-out src/sound.c,$(wildcard src/*.c))
+SRCS := $(wildcard src/*.c)
 ASMS := crt0.s
 OBJS := $(SRCS:.c=.o) $(ASMS:.s=.o)
 
@@ -54,9 +55,8 @@ ifeq ($(REGION),2)
   ENCODING := SHIFT_JIS
 endif
 
-# --- UIラベル用（UTF-8 → #define 群） ---
-GENHDR := include/messages_autogen.h
-MSGTXT := text/messages_jpn.txt
+# --- UIラベル用：message.txt は廃止 ---
+# GENHDR / MSGTXT は使わないので定義ごと削除
 
 # --- ログ ---
 LOGDIR   := build
@@ -64,18 +64,14 @@ RAW_LOG  := $(LOGDIR)/raw.log
 BMP_LOG  := $(LOGDIR)/bmp.log
 
 .PHONY: all clean gba vpk raw bmp check_cards info
-all: $(GENHDR) bmp
+all: bmp
 
 info:
 	@echo "[info] OUT='$(OUT)' REGION=$(REGION)"
 
-# --- ヘッダ自動生成（messages_jpn.txt → messages_autogen.h） ---
-$(GENHDR): $(MSGTXT) scripts/msg2h.py
-	$(Q)mkdir -p include
-	$(Q)python3 scripts/msg2h.py $(MSGTXT) $@
-
 # --- ビルド ---
-src/%.o: src/%.c $(GENHDR)
+# (GENHDR 依存を削除)
+src/%.o: src/%.c
 	$(Q)$(CC) $(CFLAGS) -c -o $@ $<
 
 %.o: %.s
@@ -90,21 +86,12 @@ $(OUTDIR)/$(OUT).gba: $(OUTDIR)/$(OUT).elf
 $(OUTDIR)/$(OUT).vpk: $(OUTDIR)/$(OUT).gba
 	$(Q)"$(NEVPK)" -i "$<" -o "$@" -c
 
-# --- VPK → RAW（カード名は messages_jpn.txt の NAME_KEY を使用） ---
+# --- VPK → RAW（タイトル名は常に "daihugo" 固定） ---
 raw: $(OUTDIR)/$(OUT).vpk
 	$(Q)mkdir -p $(LOGDIR)
 	$(Q)rm -f $(RAW_GLOB) $(OUTDIR)/card*.bin $(RAW_LOG)
-	$(Q)NAME_OPT=; \
-	name_utf8=$$(awk 'NR==1{sub(/^\xef\xbb\xbf/,"")} {gsub(/\r/,"")} !/^[[:space:]]*(#|$$)/ { if (match($$0,/^'$(NAME_KEY)'[[:space:]]*=/)) {sub(/^[^=]*=/,""); print; exit} }' "$(MSGTXT)"); \
-	if [ -n "$$name_utf8" ]; then \
-	  if [ "$(REGION)" = "2" ]; then \
-	    name_enc=$$(printf '%s' "$$name_utf8" | iconv -f UTF-8 -t SHIFT_JIS 2>/dev/null | tr -d '\n'); \
-	  else \
-	    name_enc=$$(printf '%s' "$$name_utf8" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr -d '\n'); \
-	  fi; \
-	  NAME_OPT="-name \"$$name_enc\""; \
-	fi; \
-	{ "$(NEDCMAKE)" -i "$(OUTDIR)/$(OUT).vpk" -type 2 -region $(REGION) $$NAME_OPT -bin -raw -dcsize 0 -fill 1 -save 0 -o "$(OUTDIR)/card"; } \
+	$(Q){ "$(NEDCMAKE)" -i "$(OUTDIR)/$(OUT).vpk" -type 2 -region $(REGION) \
+	       -name "daihugo" -bin -raw -dcsize 0 -fill 1 -save 0 -o "$(OUTDIR)/card"; } \
 	  >"$(RAW_LOG)" 2>&1; \
 	rc=$$?; \
 	if [ $$rc -ne 0 ]; then \
@@ -143,5 +130,5 @@ check_cards:
 	if [ "$$cnt" -gt 4 ]; then echo "ERROR: $$cnt cards (>4)."; exit 2; fi
 
 clean:
-	$(Q)rm -f $(OBJS) $(GENHDR)
+	$(Q)rm -f $(OBJS)
 	$(Q)rm -rf $(OUTDIR) $(LOGDIR)
