@@ -37,7 +37,11 @@ SECTIONS
 		*(.bss)
 		. = ALIGN(4);
 	}
-	__bss_end = .;
+    __bss_end = .;
 
-	__end = .;
+    __end = .;
+    /* newlib/sysbase が参照するエイリアスを用意 */
+    PROVIDE(_end    = __end);
+    PROVIDE(end     = __end);
+    PROVIDE(__end__ = __end);
 }
