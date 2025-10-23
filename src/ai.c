@@ -10,7 +10,8 @@ static u8 rank_effective(u8 r, u8 rev, u8 jb){
     u8 inv = (rev ^ jb) & 1u;
     return inv ? (u8)(19u - r) : r; /* 3..16 を反転マップ */
 }
-u8 rank_effective_ext(u8 r, u8 rev, u8 jb){ return rank_effective(r, rev, jb); }
+
+//u8 rank_effective_ext(u8 r, u8 rev, u8 jb){ return rank_effective(r, rev, jb); }
 
 /* ---- ユーティリティ ---- */
 typedef struct {

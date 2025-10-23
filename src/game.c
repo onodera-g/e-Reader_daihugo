@@ -10,7 +10,7 @@
 /* ==== サウンドID（数値直指定） ==== */
 #define SE_NORMAL_PLAY   65  /* 通常 */
 #define SE_ROLE_COMMON   28  /* 8切り/しばり/11バック/階段 */
-#define SE_KAKUMEI       27  /* 革命 */
+#define SE_KAKUMEI       28  /* 革命 */
 
 /* ==== 役待機（フレーム数） ==== */
 #ifndef ROLE_WAIT_FRAMES
@@ -28,6 +28,17 @@ int game_consume_pending_sfx(int* out_id){
     if (!s_sfx_pending) return 0;
     if (out_id) *out_id = s_sfx_id;
     s_sfx_pending = 0;
+    return 1;
+}
+
+/* ==== 役スプライト通知（main が拾う） ==== */
+static int   s_banner_pending = 0;
+static const char* s_banner_name = NULL;
+/* 外部公開：main.c から取得して表示する */
+int game_consume_pending_banner(const char** out_name){
+    if (!s_banner_pending) return 0;
+    if (out_name) *out_name = s_banner_name;
+    s_banner_pending = 0;
     return 1;
 }
 
@@ -164,16 +175,22 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
     PlayInfo info = detect_play_effects(cards, n, g->field_suit_mask);
     int did_role = 0;
 
-    /* 1) 革命 */
+    /* 1) 革命（毎回表示） */
     if (info.rev_toggle){
         g->revolution_active ^= 1;
+
+        /* ★スプライト要求 */
+        s_banner_name = "kakumei"; s_banner_pending = 1;
+
+        /* SE と待機 */
         s_sfx_id = SE_KAKUMEI; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
         did_role = 1;
     }
 
-    /* 2) 8切り：場へ表示→待機→待機終了時に場流し */
+    /* 2) 8切り（毎回表示） */
     if (info.eight_cut && !info.rev_toggle){
+        /* 場へ一旦表示（既存処理のまま） */
         g->field_visible     = 1;
         g->field_count       = n;
         g->field_is_straight = (detect_play_kind(cards, n) == PLAY_STRAIGHT);
@@ -190,6 +207,10 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
 
         render_set_field_cards((const char* const*)g->field_names, n);
 
+        /* ★スプライト要求 */
+        s_banner_name = "yagiri"; s_banner_pending = 1;
+
+        /* SE と待機 */
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
 
@@ -197,9 +218,13 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
         return; /* 待機に入る */
     }
 
-    /* 3) 11バック（J単体） */
+    /* 3) 11バック（毎回表示） */
     if (info.jback_toggle && !did_role){
         g->jback_active ^= 1;
+
+        /* ★スプライト要求 */
+        s_banner_name = "11back"; s_banner_pending = 1;
+
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
         did_role = 1;
@@ -223,8 +248,10 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
 
     render_set_field_cards((const char* const*)g->field_names, n);
 
-    /* 5) 階段 */
+    /* 5) 階段（★初成立時のみ表示） */
     if (g->field_is_straight && !did_role){
+        s_banner_name = "kaidan"; s_banner_pending = 1;
+
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
         did_role = 1;
@@ -233,6 +260,9 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
     /* 6) しばり新規成立（階段では付けない） */
     if (!g->field_is_straight && info.sibari_on && !did_role){
         g->sibari_active = 1;
+
+        s_banner_name = "sibari"; s_banner_pending = 1;
+
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
         did_role = 1;
@@ -272,6 +302,10 @@ void game_init(GameState* g, const Hand hands[PLAYERS], int start_player_for_dea
     s_pending_yagiri_clear = 0;
     s_sfx_pending = 0;
     s_sfx_id = -1;
+
+    /* バナー通知も初期化 */
+    s_banner_pending = 0;
+    s_banner_name = NULL;
 }
 
 int game_step_deal(GameState* g){

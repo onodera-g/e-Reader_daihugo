@@ -29,6 +29,11 @@ static int s_field_slot0_base = -1;
 static int s_field_tile_bases[4] = {-1,-1,-1,-1};
 static int s_field_count = 0;
 
+/* 役バナー：VRAMタイル先頭 / 表示フラグ / いまVRAMに載っている名前 */
+static int  s_banner_tile_base = -1;       /* 12タイル確保（48x16 = 6x2 タイル） */
+static int  s_banner_visible   = 0;
+static char s_banner_loaded[16] = {0};     /* キャッシュ名 */
+
 /* ================= ユーティリティ ================= */
 
 static inline void force_obj_1d(void){
@@ -61,6 +66,41 @@ static void upload_back_8x16_once_(const char* name, int tile_base, int pal_bank
   spr_dma_copy32((void*)&OBJ_PAL16[pal_bank*16], obj_atlasPal, 8);
 }
 
+/* 48x16 バナーを 12タイル(6x2)として VRAM に転送 */
+static void upload_banner_48x16_once_(const char* name, int tile_base, int pal_bank){
+  int idx = objAtlasFindIndex(name);
+  if (idx < 0) return;
+  const ObjSpriteDesc* d = &objAtlasSprites[idx];
+  if (!(d->w == 48 && d->h == 16)) return;
+
+  const u8* src = ((const u8*)obj_atlasTiles) + d->offset_words * 4;
+  u8*       dst = (u8*)OBJ_VRAM8 + tile_base * 32;
+
+  /* タイルは 6(横) x 2(縦)。1Dで16x16を正しく組むため、
+     [0,1,6,7] を dst[0..3] に、[2,3,8,9] を dst[4..7] に、
+     [4,5,10,11] を dst[8..11] に並べ替えてコピーする */
+  const int tiles_w = 6;
+  const int tiles_h = 2; /* 高さ16なので2行 */
+  const int TILE_BYTES = 32;
+
+  /* ブロック i=0..2（左/中央/右 の 16x16） */
+  for (int i = 0; i < 3; ++i){
+    int c = i * 2;              /* このブロックの先頭列（8x8単位） */
+    int src_idx[4] = {
+      /* 上段2枚 */ c + 0, c + 1,
+      /* 下段2枚 */ c + tiles_w + 0, c + tiles_w + 1
+    };
+    int dst_off = i * 4;        /* このブロックの出力先（4タイル分） */
+    for (int j = 0; j < 4; ++j){
+      const u8* s = src + src_idx[j] * TILE_BYTES;
+      u8*       d2 = dst + (dst_off + j) * TILE_BYTES;
+      spr_dma_copy32(d2, s, TILE_BYTES / 4);
+    }
+  }
+    spr_dma_copy32((void*)&OBJ_PAL16[pal_bank*16], obj_atlasPal, 8);
+}
+
+/* OAM 設定ヘルパー */
 static inline void oam_set_face_16x32_(int oam, int x, int y, int tile_base, int pal_bank){
   volatile u16* oo = OAM_ATTR(oam);
   oo[0] = ATTR0_Y(y) | ATTR0_MODE_REG | ATTR0_4BPP | ATTR0_SHAPE_TALL;
@@ -75,6 +115,14 @@ static inline void oam_set_back_8x16_(int oam, int x, int y, int tile_base, int 
   oo[2] = ATTR2_TILE(tile_base) | ATTR2_PBANK(pal_bank);
 }
 
+/* 16x16（正方形）を1枚出す。バナーは 16x16×3 で合成表示する */
+static inline void oam_set_square_16x16_(int oam, int x, int y, int tile_base, int pal_bank){
+  volatile u16* oo = OAM_ATTR(oam);
+  oo[0] = ATTR0_Y(y) | ATTR0_MODE_REG | ATTR0_4BPP | ATTR0_SHAPE_SQ;
+  oo[1] = ATTR1_X(x) | ATTR1_SIZE(1); /* 16x16 */
+  oo[2] = ATTR2_TILE(tile_base) | ATTR2_PBANK(pal_bank);
+}
+
 /* =============== 公開 API =============== */
 
 void render_init_vram(const Hand* me,
@@ -83,7 +131,7 @@ void render_init_vram(const Hand* me,
                       int* out_back_tile_base,
                       int* out_field_tile_base)
 {
-  enum { PAL_FACE = 0, PAL_BACK = 0 };
+  enum { PAL_FACE = 0, PAL_BACK = 0, PAL_BANNER = 0 };
   int tb = 0;
 
   force_obj_1d();
@@ -113,7 +161,13 @@ void render_init_vram(const Hand* me,
   s_field_count = 0;
   tb += 8 * 4;
 
-  /* 役バナー用のVRAMは割り当てない（非表示方針） */
+  /* 役バナー用のVRAM（12タイル確保：48x16） */
+  s_banner_tile_base = tb;
+  tb += 12;
+
+  /* 初期状態：非表示 */
+  s_banner_visible = 0;
+  s_banner_loaded[0] = '\0';
 
   if (out_field_tile_base) *out_field_tile_base = s_field_slot0_base;
 }
@@ -140,7 +194,7 @@ void render_set_field_cards(const char* const names[4], int count){
   }
 }
 
-/* --- 互換API（役演出は無効化） --- */
+/* --- 互換API（旧演出は無効） --- */
 void render_set_yagiri_visible(int on){ (void)on; /* no-op */ }
 void render_trigger_sibari(int frames){ (void)frames; /* no-op */ }
 
@@ -150,7 +204,33 @@ void render_effect_enqueue(int effect /*FxEffect*/, int frames){
   s_fx_time[effect] = frames;
 }
 
-/* 1フレーム描画（カードのみ） */
+/* ===== 新規：役スプライト API ===== */
+void render_show_role_sprite(const char* name){
+  if (!name || s_banner_tile_base < 0) return;
+
+  /* すでに同じ名前が載っていれば再転送しない */
+  int same = 0;
+  if (s_banner_loaded[0] != '\0'){
+    const char* a = s_banner_loaded; const char* b = name;
+    same = 1;
+    while (*a || *b){ if (*a != *b){ same = 0; break; } ++a; ++b; }
+  }
+
+  if (!same){
+    /* 48x16 の画像を 12タイル分 VRAM に転送 */
+    upload_banner_48x16_once_(name, s_banner_tile_base, /*PAL_BANNER=*/0);
+    /* 名前をキャッシュ */
+    int i=0; for (; i<15 && name[i]; ++i) s_banner_loaded[i] = name[i];
+    s_banner_loaded[i] = '\0';
+  }
+  s_banner_visible = 1;
+}
+
+void render_hide_role_sprite(void){
+  s_banner_visible = 0;
+}
+
+/* 1フレーム描画（カード＋役バナー） */
 void render_frame(const int g_visible[PLAYERS],
                   const int player_face_tile_base[12],
                   int back_tile_base,
@@ -166,16 +246,16 @@ void render_frame(const int g_visible[PLAYERS],
   /* CPU裏（共通） */
   const int back_w=8, back_h=16, back_gap=1;
   const int row_max = 7;
-  const int cpu_start_y = 24;
+  const int cpu_start_y = 15;
   const int row_spacing = back_h + 2;
 
   { int start_x=8, base_y=cpu_start_y, show=g_visible[1];
     for(int i=0;i<show;i++){ int row=i/row_max, col=i%row_max;
       oam_set_back_8x16_(oam++, start_x+col*(back_w+back_gap), base_y+row*row_spacing, back_tile_base, 0); } }
-  { int start_x=96, base_y=cpu_start_y, show=g_visible[2];
+  { int start_x=90, base_y=cpu_start_y, show=g_visible[2];
     for(int i=0;i<show;i++){ int row=i/row_max, col=i%row_max;
       oam_set_back_8x16_(oam++, start_x+col*(back_w+back_gap), base_y+row*row_spacing, back_tile_base, 0); } }
-  { int start_x=184, base_y=cpu_start_y, show=g_visible[3];
+  { int start_x=170, base_y=cpu_start_y, show=g_visible[3];
     for(int i=0;i<show;i++){ int row=i/row_max, col=i%row_max;
       oam_set_back_8x16_(oam++, start_x+col*(back_w+back_gap), base_y+row*row_spacing, back_tile_base, 0); } }
 
@@ -191,7 +271,7 @@ void render_frame(const int g_visible[PLAYERS],
   if (field_visible){
     int count = field_count; if (count>4) count=4; if (count<0) count=0;
     const int face_w=16, face_h=32, gap=2;
-    const int fy = (160/2) - (face_h/2);
+    const int fy = (160/2) - (face_h/2)+20;
     const int total_w = count*face_w + (count? (count-1)*gap : 0);
     const int start = (240/2) - (total_w/2);
     for (int i=0;i<count;i++){
@@ -202,7 +282,21 @@ void render_frame(const int g_visible[PLAYERS],
     }
   }
 
-  /* 役バナーの描画はしない（要求仕様） */
+  /* 役バナー：表示要求があれば 16x16×3 で中央上に合成表示 */
+  if (s_banner_visible && s_banner_tile_base >= 0){
+    const int bw = 16;
+    const int total_w = 3 * bw;
+    const int start_x = (240 - total_w) / 2;
+    const int y = 60; /* 画面上部に出す */
+
+    /* 48x16 を 16x16 × 3 に分割（VRAMは 12タイルなので、ブロックごとに +4 タイルずつ進む） */
+    for (int i=0;i<3;i++){
+      int tb = s_banner_tile_base + i * 4; /* 16x16 は 4タイル */
+      oam_set_square_16x16_(oam++, start_x + i*bw, y, tb, 0);
+    }
+  }
+
+  /* 役バナーの寿命カウンタ（将来復帰用） */
   for (int i=0;i<FXE_COUNT;i++){
     if (s_fx_time[i] > 0) s_fx_time[i]--;
   }

@@ -52,6 +52,8 @@ void render_upload_field_cards(const char** names, int count);
 void render_effect_enqueue(int effect, int frames);
 
 int  render_is_effect_active(void);
+void render_show_role_sprite(const char* name);  /* "yagiri","sibari","11back","kaidan","kakumei" */
+void render_hide_role_sprite(void);
 
 #ifdef __cplusplus
 }

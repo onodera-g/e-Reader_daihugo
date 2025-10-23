@@ -12,6 +12,7 @@
 
 /* game.c 側のエクスポート（ヘッダは触らず extern 宣言で使う） */
 extern int game_consume_pending_sfx(int* out_id);
+extern int game_consume_pending_banner(const char** out_name);
 
 /* 画面のVBlank開始まで待つ（描画同期） */
 static inline void wait_vblank_start(void){
@@ -32,6 +33,7 @@ static GameState g;
 static int g_player_face_tile_base[12];
 static int g_back_tile_base = 0;
 static int g_field_tile_base = -1;
+static int banner_shown = 0;
 
 int main(void){
   /* 画面＆UI */
@@ -68,6 +70,8 @@ int main(void){
 
   u32 prev = 0; // 前フレームの入力状況
   for(;;){
+    const char* fxname = NULL; /* 役スプライト名（毎フレーム初期化） */
+
     /* 入力（Bで終了） */
     u32 key  = ERAPI_GetKeyStateRaw();
     u32 edge = key & ~prev; prev = key;
@@ -76,8 +80,8 @@ int main(void){
     /* 1) 配りアニメ */
     int dealt_now = game_step_deal(&g);
     if (dealt_now){
-    sound_play_se(SND_SE_DEAL);   // ← この行を追加
-}
+      sound_play_se(SND_SE_DEAL);
+    }
 
     /* 2) 配り完了の瞬間だけ BGM を開始 */
     if (!bgm_started && g.deal_done){
@@ -103,7 +107,17 @@ int main(void){
       sound_play_se(se_id);
     }
 
-    /* 5) 役スプライトの直表示や、八切り/縛りの main 直鳴らしは全て廃止 */
+    /* 5) ★ 役スプライト表示要求：game → main で消費して出す */
+    if (game_consume_pending_banner(&fxname)) {
+      render_show_role_sprite(fxname);   // "yagiri","sibari","11back","kaidan","kakumei"
+      banner_shown = 1;
+    }
+
+    /* 6) ★ 待機が終わったら消す（待機は game 側 g.fx_display_time で管理） */
+    if (banner_shown && g.fx_display_time == 0) {
+      render_hide_role_sprite();
+      banner_shown = 0;
+    }
 
     /* サウンド更新（必要に応じて） */
     sound_update();

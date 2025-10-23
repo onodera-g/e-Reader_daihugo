@@ -25,6 +25,6 @@ int ai_choose_move_group(const Hand* hand,
                          u8* out_n);
 
 /* rank反転込みの有効ランク（革命/JBのXORで反転） */
-u8 rank_effective_ext(u8 r, u8 rev, u8 jb);
+//u8 rank_effective_ext(u8 r, u8 rev, u8 jb);
 
 #endif /* AI_H */
