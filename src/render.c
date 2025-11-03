@@ -33,6 +33,8 @@ static int s_field_count = 0;
 static int  s_banner_tile_base = -1;       /* 12タイル確保（48x16 = 6x2 タイル） */
 static int  s_banner_visible   = 0;
 static char s_banner_loaded[16] = {0};     /* キャッシュ名 */
+/* ★追加：-1=中央/0..3=各プレイヤの位置に表示 */
+static int  s_banner_anchor_player = -1;
 
 /* ================= ユーティリティ ================= */
 
@@ -168,6 +170,7 @@ void render_init_vram(const Hand* me,
   /* 初期状態：非表示 */
   s_banner_visible = 0;
   s_banner_loaded[0] = '\0';
+  s_banner_anchor_player = -1;
 
   if (out_field_tile_base) *out_field_tile_base = s_field_slot0_base;
 }
@@ -230,6 +233,12 @@ void render_hide_role_sprite(void){
   s_banner_visible = 0;
 }
 
+/* ★追加：PASS を出したプレイヤの位置にバナーを出すための API */
+void render_set_banner_player(int player){
+  if (player < -1 || player > 3) player = -1;
+  s_banner_anchor_player = player;
+}
+
 /* 1フレーム描画（カード＋役バナー） */
 void render_frame(const int g_visible[PLAYERS],
                   const int player_face_tile_base[12],
@@ -282,17 +291,40 @@ void render_frame(const int g_visible[PLAYERS],
     }
   }
 
-  /* 役バナー：表示要求があれば 16x16×3 で中央上に合成表示 */
+  /* 役バナー：表示要求があれば 16x16×3 を指定位置に合成表示 */
   if (s_banner_visible && s_banner_tile_base >= 0){
     const int bw = 16;
     const int total_w = 3 * bw;
-    const int start_x = (240 - total_w) / 2;
-    const int y = 60; /* 画面上部に出す */
 
-    /* 48x16 を 16x16 × 3 に分割（VRAMは 12タイルなので、ブロックごとに +4 タイルずつ進む） */
+    /* 既定：中央上（従来） */
+    int x = (240 - total_w) / 2;
+    int y = 60;
+
+    /* ★プレイヤ別に位置を切替 */
+    switch (s_banner_anchor_player){
+      case 0: /* 自分（下） */
+        x = 110;
+        y = 110;  /* 自分の手札の少し上 */
+        break;
+      case 1: /* 左上CPU */
+        x = 30;
+        y = 50;
+        break;
+      case 2: /* 上中央CPU */
+        x = 110;
+        y = 50;
+        break;
+      case 3: /* 右上CPU */
+        x = 190;
+        y = 50;
+        break;
+      default: /* -1: 従来の中央上 */
+        break;
+    }
+
     for (int i=0;i<3;i++){
       int tb = s_banner_tile_base + i * 4; /* 16x16 は 4タイル */
-      oam_set_square_16x16_(oam++, start_x + i*bw, y, tb, 0);
+      oam_set_square_16x16_(oam++, x + i*bw, y, tb, 0);
     }
   }
 

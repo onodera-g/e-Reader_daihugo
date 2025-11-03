@@ -17,14 +17,14 @@ typedef struct {
   unsigned char  height_code;
 } ObjSpriteDesc;
 
-#define obj_atlasTilesLen 15840
-extern const unsigned int obj_atlasTiles[3960];
+#define obj_atlasTilesLen 16224
+extern const unsigned int obj_atlasTiles[4056];
 #define obj_atlasPalLen 32
 extern const unsigned short obj_atlasPal[16];
 
-extern const ObjSpriteDesc objAtlasSprites[61];
-extern const char* objAtlasNames[61];
-#define OBJ_ATLAS_SPRITE_COUNT 61
+extern const ObjSpriteDesc objAtlasSprites[62];
+extern const char* objAtlasNames[62];
+#define OBJ_ATLAS_SPRITE_COUNT 62
 
 int objAtlasFindIndex(const char* name);
 

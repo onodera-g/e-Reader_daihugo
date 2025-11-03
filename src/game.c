@@ -34,10 +34,13 @@ int game_consume_pending_sfx(int* out_id){
 /* ==== 役スプライト通知（main が拾う） ==== */
 static int   s_banner_pending = 0;
 static const char* s_banner_name = NULL;
-/* 外部公開：main.c から取得して表示する */
-int game_consume_pending_banner(const char** out_name){
+/* ★追加：誰の位置に出すか（-1 なら従来の中央上） */
+static int   s_banner_player = -1;
+/* 外部公開：main.c から取得して表示する（シグネチャ拡張） */
+int game_consume_pending_banner(const char** out_name, int* out_player){
     if (!s_banner_pending) return 0;
-    if (out_name) *out_name = s_banner_name;
+    if (out_name)   *out_name = s_banner_name;
+    if (out_player) *out_player = s_banner_player;
     s_banner_pending = 0;
     return 1;
 }
@@ -180,7 +183,7 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
         g->revolution_active ^= 1;
 
         /* ★スプライト要求 */
-        s_banner_name = "kakumei"; s_banner_pending = 1;
+        s_banner_name = "kakumei"; s_banner_pending = 1; s_banner_player = -1;
 
         /* SE と待機 */
         s_sfx_id = SE_KAKUMEI; s_sfx_pending = 1;
@@ -208,7 +211,7 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
         render_set_field_cards((const char* const*)g->field_names, n);
 
         /* ★スプライト要求 */
-        s_banner_name = "yagiri"; s_banner_pending = 1;
+        s_banner_name = "yagiri"; s_banner_pending = 1; s_banner_player = -1;
 
         /* SE と待機 */
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
@@ -223,7 +226,7 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
         g->jback_active ^= 1;
 
         /* ★スプライト要求 */
-        s_banner_name = "11back"; s_banner_pending = 1;
+        s_banner_name = "11back"; s_banner_pending = 1; s_banner_player = -1;
 
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
@@ -250,7 +253,7 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
 
     /* 5) 階段（★初成立時のみ表示） */
     if (g->field_is_straight && !did_role){
-        s_banner_name = "kaidan"; s_banner_pending = 1;
+        s_banner_name = "kaidan"; s_banner_pending = 1; s_banner_player = -1;
 
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
@@ -261,7 +264,7 @@ static void apply_play(GameState* g, const u8* cards, u8 n){
     if (!g->field_is_straight && info.sibari_on && !did_role){
         g->sibari_active = 1;
 
-        s_banner_name = "sibari"; s_banner_pending = 1;
+        s_banner_name = "sibari"; s_banner_pending = 1; s_banner_player = -1;
 
         s_sfx_id = SE_ROLE_COMMON; s_sfx_pending = 1;
         fx_set_wait(g, ROLE_WAIT_FRAMES);
@@ -306,6 +309,7 @@ void game_init(GameState* g, const Hand hands[PLAYERS], int start_player_for_dea
     /* バナー通知も初期化 */
     s_banner_pending = 0;
     s_banner_name = NULL;
+    /* s_banner_player はファイルスコープで -1 初期化 */
 }
 
 int game_step_deal(GameState* g){
@@ -379,6 +383,17 @@ int game_step_turn(GameState* g, Hand hands[PLAYERS]){
         g->pass_count++;
         g->turn_player = (p + 1) & 3;
         g->turn_delay  = TURN_DELAY_FRAMES;
+
+        /* ★PASS スプライト要求（出したプレイヤの位置で表示） */
+        s_banner_name   = "pass";
+        s_banner_player = p;           /* ← ここが肝心 */
+        s_banner_pending = 1;
+
+        /* PASS 音（任意） */
+        s_sfx_id = SE_NORMAL_PLAY;
+        s_sfx_pending = 1;
+        fx_set_wait(g, ROLE_WAIT_FRAMES);  /* 1秒ほど表示 */
+
         if (g->pass_count >= 3){
             reset_field(g);
             render_set_field_cards(NULL, 0);

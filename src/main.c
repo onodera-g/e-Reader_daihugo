@@ -12,7 +12,13 @@
 
 /* game.c 側のエクスポート（ヘッダは触らず extern 宣言で使う） */
 extern int game_consume_pending_sfx(int* out_id);
-extern int game_consume_pending_banner(const char** out_name);
+extern int game_consume_pending_bgm(int* out_id);
+
+/* ★シグネチャ拡張版を利用 */
+extern int game_consume_pending_banner(const char** out_name, int* out_player);
+
+/* ★render 側の前方宣言（ヘッダは触らない） */
+extern void render_set_banner_player(int player);
 
 /* 画面のVBlank開始まで待つ（描画同期） */
 static inline void wait_vblank_start(void){
@@ -107,9 +113,17 @@ int main(void){
       sound_play_se(se_id);
     }
 
+    /* 4.5) ★ BGM 切替（革命ON/OFFや他の要求） */
+    int bgm_id = -1;
+    if (game_consume_pending_bgm(&bgm_id)) {
+      sound_play_bgm(bgm_id, /*loop=*/1);
+    }
+
     /* 5) ★ 役スプライト表示要求：game → main で消費して出す */
-    if (game_consume_pending_banner(&fxname)) {
-      render_show_role_sprite(fxname);   // "yagiri","sibari","11back","kaidan","kakumei"
+    int pidx = -1;
+    if (game_consume_pending_banner(&fxname, &pidx)) {
+      render_set_banner_player(pidx);     /* ← 追加：誰の位置に出すか先に指定 */
+      render_show_role_sprite(fxname);    // 既存API
       banner_shown = 1;
     }
 
